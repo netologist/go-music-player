@@ -312,6 +312,14 @@ func (p *Player) QueueSongs() []Song {
 	return out
 }
 
+// QueueIterator: Player'ın o anki oynatma sırası üzerinde gezinmek için
+// bir SongIterator döner (Iterator Pattern).
+func (p *Player) QueueIterator() SongIterator {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return NewSongIterator(p.queue)
+}
+
 // Subscribe: Player olaylarını dinlemek için bir EventListener kaydeder (Observer Pattern).
 // Dönen unsubscribe fonksiyonu çağrılarak dinleme sonlandırılabilir.
 func (p *Player) Subscribe(l EventListener) (unsubscribe func()) {

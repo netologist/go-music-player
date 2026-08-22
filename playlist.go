@@ -175,3 +175,36 @@ func (p *Playlist) At(index int) (Song, error) {
 	}
 	return p.songs[index], nil
 }
+
+// Iterator: Playlist üzerinde gezinmek için bir SongIterator döner (Iterator Pattern).
+func (p *Playlist) Iterator() SongIterator {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return NewSongIterator(p.songs)
+}
+
+// ForEach, playlist'teki her şarkı için verilen fonksiyonu çalıştırır.
+// Fonksiyon false dönerse döngü erken sonlanır (short-circuiting).
+// Kilit altında çalıştığı için ekstra slice kopyalama maliyeti oluşturmaz (O(1) ekstra bellek).
+func (p *Playlist) ForEach(fn func(index int, song Song) bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for i, s := range p.songs {
+		if !fn(i, s) {
+			break
+		}
+	}
+}
+
+// Filter, verilen koşula uyan şarkıları içeren yeni bir Song dilimi döner.
+func (p *Playlist) Filter(predicate func(Song) bool) []Song {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	var out []Song
+	for _, s := range p.songs {
+		if predicate(s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
