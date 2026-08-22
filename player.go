@@ -2,7 +2,7 @@ package musicplayer
 
 import (
 	"errors"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 )
 
@@ -50,10 +50,12 @@ type Player struct {
 	currentSongID string
 	state         PlaybackState
 	repeatMode    RepeatMode
+	rng           *rand.Rand
 }
 
 // NewPlayer, playlist'in o anki halinden bir snapshot alarak player'ı kurar.
-func NewPlayer(playlist *Playlist) *Player {
+// PlayerOption ile repeatMode ve rand generator gibi ayarlar yapılandırılabilir.
+func NewPlayer(playlist *Playlist, opts ...PlayerOption) *Player {
 	songs := playlist.Songs()
 	p := &Player{
 		playlist:      playlist,
@@ -65,6 +67,9 @@ func NewPlayer(playlist *Playlist) *Player {
 	}
 	if len(songs) > 0 {
 		p.currentSongID = songs[0].ID
+	}
+	for _, opt := range opts {
+		opt(p)
 	}
 	return p
 }
@@ -213,7 +218,12 @@ func (p *Player) Shuffle() {
 	defer p.mu.Unlock()
 
 	for i := len(p.queue) - 1; i > 0; i-- {
-		j := rand.Intn(i + 1)
+		var j int
+		if p.rng != nil {
+			j = p.rng.IntN(i + 1)
+		} else {
+			j = rand.IntN(i + 1)
+		}
 		p.queue[i], p.queue[j] = p.queue[j], p.queue[i]
 	}
 	p.syncCurrentIndexLocked()

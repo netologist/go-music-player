@@ -39,7 +39,7 @@ func MergePlaylists(p1, p2 *Playlist, policy DuplicatePolicy) *Playlist {
 	// "her iki kopyayı da tut" davranışını sessizce bozardı. Playlist'in
 	// kendi dedup toggle'ı, kullanıcı sonradan bu merged playlist'e yeni
 	// şarkı eklerken kullanılsın diye ayrıca saklanır (aşağıda set edilir).
-	merged := NewPlaylist(p1.Name+"+"+p2.Name, false)
+	merged := NewPlaylist(p1.Name + "+" + p2.Name)
 
 	s1 := p1.Songs()
 	s2 := p2.Songs()

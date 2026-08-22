@@ -26,15 +26,19 @@ type Playlist struct {
 	DedupEnabled bool
 }
 
-// NewPlaylist bir playlist oluşturur. dedupEnabled true ise AddSong,
-// zaten var olan bir ID'yi tekrar eklemeyi reddeder.
-func NewPlaylist(name string, dedupEnabled bool) *Playlist {
-	return &Playlist{
+// NewPlaylist bir playlist oluşturur. Functional Options Pattern kullanılarak
+// WithDedup veya WithInitialSongs gibi opsiyonlarla esnek şekilde yapılandırılabilir.
+func NewPlaylist(name string, opts ...PlaylistOption) *Playlist {
+	p := &Playlist{
 		Name:         name,
 		songs:        make([]Song, 0),
 		indexByID:    make(map[string]int),
-		DedupEnabled: dedupEnabled,
+		DedupEnabled: false,
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // AddSong: O(1) amortized (append) + O(1) map insert.

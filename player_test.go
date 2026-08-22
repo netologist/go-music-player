@@ -1,10 +1,13 @@
 package musicplayer
 
-import "testing"
+import (
+	"math/rand/v2"
+	"testing"
+)
 
 func buildTestPlayer(t *testing.T) *Player {
 	t.Helper()
-	pl := NewPlaylist("test", false)
+	pl := NewPlaylist("test")
 	_ = pl.AddSong(mustSong(t, "1", "A"))
 	_ = pl.AddSong(mustSong(t, "2", "B"))
 	_ = pl.AddSong(mustSong(t, "3", "C"))
@@ -14,7 +17,7 @@ func buildTestPlayer(t *testing.T) *Player {
 // TestPlay_EmptyPlaylist_ReturnsError: boş playlist ile Play() çağrısının
 // panik atmadan anlamlı bir hata dönmesini doğrular.
 func TestPlay_EmptyPlaylist_ReturnsError(t *testing.T) {
-	pl := NewPlaylist("empty", false)
+	pl := NewPlaylist("empty")
 	p := NewPlayer(pl)
 
 	if err := p.Play(); err != ErrEmptyPlaylist {
@@ -184,5 +187,42 @@ func TestRestoreOrder_ReturnsToOriginal(t *testing.T) {
 	second, _ := p.CurrentSong()
 	if second.ID != "2" {
 		t.Fatalf("RestoreOrder sonrası ikinci şarkı '2' olmalı, bulunan: %s", second.ID)
+	}
+}
+
+// TestPlayer_FunctionalOptions: WithRepeatMode ve WithRandSource opsiyonlarını doğrular.
+func TestPlayer_FunctionalOptions(t *testing.T) {
+	pl := NewPlaylist("test")
+	_ = pl.AddSong(mustSong(t, "1", "A"))
+	_ = pl.AddSong(mustSong(t, "2", "B"))
+
+	player := NewPlayer(pl, WithRepeatMode(RepeatAll))
+	if player.RepeatModeValue() != RepeatAll {
+		t.Fatalf("WithRepeatMode(RepeatAll) çalışmadı, bulunan: %v", player.RepeatModeValue())
+	}
+}
+
+// TestPlayer_WithRandSource_DeterministicShuffle: Dependency Injection ile
+// sağlanan deterministik rastgele sayı üreticisinin tutarlı karıştırma yaptığını doğrular.
+func TestPlayer_WithRandSource_DeterministicShuffle(t *testing.T) {
+	pl := NewPlaylist("test")
+	for i := 1; i <= 5; i++ {
+		_ = pl.AddSong(mustSong(t, string(rune('0'+i)), "Song"))
+	}
+
+	rng1 := rand.New(rand.NewPCG(42, 100))
+	p1 := NewPlayer(pl, WithRandSource(rng1))
+	p1.Shuffle()
+	songs1 := p1.QueueSongs()
+
+	rng2 := rand.New(rand.NewPCG(42, 100))
+	p2 := NewPlayer(pl, WithRandSource(rng2))
+	p2.Shuffle()
+	songs2 := p2.QueueSongs()
+
+	for i := range songs1 {
+		if songs1[i].ID != songs2[i].ID {
+			t.Fatalf("aynı seed ile deterministik shuffle aynı sırayı üretmedi: %v vs %v", extractIDs(songs1), extractIDs(songs2))
+		}
 	}
 }

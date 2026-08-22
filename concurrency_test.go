@@ -16,7 +16,7 @@ import (
 // runtime'ın belleğe eşzamanlı erişimleri izlemesini sağlar ve gerçek
 // bir veri yarışı varsa testi FAIL ettirir.
 func TestConcurrentAddAndRead(t *testing.T) {
-	p := NewPlaylist("concurrent", false)
+	p := NewPlaylist("concurrent")
 
 	var wg sync.WaitGroup
 	numWriters := 20
@@ -53,7 +53,7 @@ func TestConcurrentAddAndRead(t *testing.T) {
 // beklenmez (hangi goroutine'in önce çalıştığı garanti değil) — buradaki
 // asıl amaç race detector'ın hiçbir veri yarışı raporlamamasıdır.
 func TestConcurrentPlayerControls(t *testing.T) {
-	pl := NewPlaylist("test", false)
+	pl := NewPlaylist("test")
 	for i := 0; i < 10; i++ {
 		_ = pl.AddSong(mustSongNoT(fmt.Sprintf("%d", i), fmt.Sprintf("Song %d", i)))
 	}

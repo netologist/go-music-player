@@ -4,12 +4,12 @@ import "testing"
 
 func buildTestPlaylists(t *testing.T) (*Playlist, *Playlist) {
 	t.Helper()
-	p1 := NewPlaylist("P1", false)
+	p1 := NewPlaylist("P1")
 	_ = p1.AddSong(mustSong(t, "A", "Song A"))
 	_ = p1.AddSong(mustSong(t, "B", "Song B - v1"))
 	_ = p1.AddSong(mustSong(t, "C", "Song C"))
 
-	p2 := NewPlaylist("P2", false)
+	p2 := NewPlaylist("P2")
 	_ = p2.AddSong(mustSong(t, "D", "Song D"))
 	_ = p2.AddSong(mustSong(t, "B", "Song B - v2")) // B, p1'de de var (çakışma)
 	_ = p2.AddSong(mustSong(t, "E", "Song E"))

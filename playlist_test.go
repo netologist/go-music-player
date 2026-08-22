@@ -17,7 +17,7 @@ func mustSong(t *testing.T, id, title string) Song {
 // TestAddSong_BasicAppend: temel ekleme işleminin sırayı koruduğunu
 // ve Len()'in doğru arttığını doğrular.
 func TestAddSong_BasicAppend(t *testing.T) {
-	p := NewPlaylist("test", false)
+	p := NewPlaylist("test")
 	s1 := mustSong(t, "1", "Song A")
 	s2 := mustSong(t, "2", "Song B")
 
@@ -40,7 +40,7 @@ func TestAddSong_BasicAppend(t *testing.T) {
 // TestAddSong_DedupEnabled_RejectsDuplicate: dedup açıkken aynı ID'nin
 // tekrar eklenemediğini doğrular.
 func TestAddSong_DedupEnabled_RejectsDuplicate(t *testing.T) {
-	p := NewPlaylist("test", true)
+	p := NewPlaylist("test", WithDedup(true))
 	s1 := mustSong(t, "1", "Song A")
 
 	if err := p.AddSong(s1); err != nil {
@@ -57,7 +57,7 @@ func TestAddSong_DedupEnabled_RejectsDuplicate(t *testing.T) {
 // TestAddSong_DedupDisabled_AllowsDuplicate: dedup kapalıyken aynı ID'nin
 // iki kez eklenebildiğini doğrular (varsayılan davranış farkı).
 func TestAddSong_DedupDisabled_AllowsDuplicate(t *testing.T) {
-	p := NewPlaylist("test", false)
+	p := NewPlaylist("test")
 	s1 := mustSong(t, "1", "Song A")
 
 	_ = p.AddSong(s1)
@@ -73,7 +73,7 @@ func TestAddSong_DedupDisabled_AllowsDuplicate(t *testing.T) {
 // index map'inin tutarlı kaldığını (bir sonraki AddSong'un doğru
 // çalışmasıyla dolaylı olarak) doğrular.
 func TestRemoveSong_ByID(t *testing.T) {
-	p := NewPlaylist("test", false)
+	p := NewPlaylist("test")
 	_ = p.AddSong(mustSong(t, "1", "A"))
 	_ = p.AddSong(mustSong(t, "2", "B"))
 	_ = p.AddSong(mustSong(t, "3", "C"))
@@ -94,7 +94,7 @@ func TestRemoveSong_ByID(t *testing.T) {
 // TestRemoveSong_NotFound: olmayan bir ID silinmeye çalışılırsa
 // ErrSongNotFound dönmeli (edge case).
 func TestRemoveSong_NotFound(t *testing.T) {
-	p := NewPlaylist("test", false)
+	p := NewPlaylist("test")
 	if err := p.RemoveSong("ghost"); err != ErrSongNotFound {
 		t.Fatalf("beklenen ErrSongNotFound, alınan: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRemoveSong_NotFound(t *testing.T) {
 // TestRemoveAt_InvalidIndex: geçersiz index (negatif veya sınır dışı)
 // ErrInvalidIndex dönmeli.
 func TestRemoveAt_InvalidIndex(t *testing.T) {
-	p := NewPlaylist("test", false)
+	p := NewPlaylist("test")
 	_ = p.AddSong(mustSong(t, "1", "A"))
 
 	if err := p.RemoveAt(-1); err != ErrInvalidIndex {
@@ -117,7 +117,7 @@ func TestRemoveAt_InvalidIndex(t *testing.T) {
 // TestMoveSong_Reorder: bir şarkıyı ileri ve geri taşımanın, hem slice
 // sırasını hem de index map'ini doğru güncellediğini doğrular.
 func TestMoveSong_Reorder(t *testing.T) {
-	p := NewPlaylist("test", false)
+	p := NewPlaylist("test")
 	_ = p.AddSong(mustSong(t, "1", "A"))
 	_ = p.AddSong(mustSong(t, "2", "B"))
 	_ = p.AddSong(mustSong(t, "3", "C"))
@@ -148,7 +148,7 @@ func TestMoveSong_Reorder(t *testing.T) {
 
 // TestMoveSong_NotFound: olmayan bir ID taşınmaya çalışılırsa hata dönmeli.
 func TestMoveSong_NotFound(t *testing.T) {
-	p := NewPlaylist("test", false)
+	p := NewPlaylist("test")
 	_ = p.AddSong(mustSong(t, "1", "A"))
 	if err := p.MoveSong("ghost", 0); err != ErrSongNotFound {
 		t.Fatalf("beklenen ErrSongNotFound, alınan: %v", err)
@@ -158,7 +158,7 @@ func TestMoveSong_NotFound(t *testing.T) {
 // TestMoveSong_InvalidPosition: geçersiz hedef pozisyon ErrInvalidPosition
 // dönmeli (edge case: negatif ya da sınır dışı).
 func TestMoveSong_InvalidPosition(t *testing.T) {
-	p := NewPlaylist("test", false)
+	p := NewPlaylist("test")
 	_ = p.AddSong(mustSong(t, "1", "A"))
 	if err := p.MoveSong("1", 10); err != ErrInvalidPosition {
 		t.Fatalf("beklenen ErrInvalidPosition, alınan: %v", err)
@@ -169,7 +169,7 @@ func TestMoveSong_InvalidPosition(t *testing.T) {
 // değişikliğin internal state'i ETKİLEMEDİĞİNİ doğrular. Bu, "neden kopya
 // döndürüyoruz" tasarım kararının doğruluğunu kanıtlayan kritik bir test.
 func TestSongs_ReturnsCopyNotReference(t *testing.T) {
-	p := NewPlaylist("test", false)
+	p := NewPlaylist("test")
 	_ = p.AddSong(mustSong(t, "1", "A"))
 
 	songs := p.Songs()
@@ -184,7 +184,7 @@ func TestSongs_ReturnsCopyNotReference(t *testing.T) {
 // TestEmptyPlaylist_Operations: boş playlist üzerinde işlemlerin panik
 // atmadan, anlamlı hatalarla döndüğünü doğrular (edge case).
 func TestEmptyPlaylist_Operations(t *testing.T) {
-	p := NewPlaylist("empty", false)
+	p := NewPlaylist("empty")
 
 	if p.Len() != 0 {
 		t.Fatalf("boş playlist Len() 0 olmalı")
@@ -194,5 +194,24 @@ func TestEmptyPlaylist_Operations(t *testing.T) {
 	}
 	if _, err := p.At(0); err != ErrInvalidIndex {
 		t.Fatalf("boş playlist'te At(0) ErrInvalidIndex dönmeli: %v", err)
+	}
+}
+
+// TestPlaylist_FunctionalOptions: WithDedup ve WithInitialSongs fonksiyonel
+// opsiyonlarının playlist kurulumunu doğru yaptığını doğrular.
+func TestPlaylist_FunctionalOptions(t *testing.T) {
+	s1 := mustSong(t, "1", "Song A")
+	s2 := mustSong(t, "2", "Song B")
+
+	p := NewPlaylist("My Playlist", WithDedup(true), WithInitialSongs(s1, s2))
+
+	if !p.DedupEnabled {
+		t.Fatalf("WithDedup(true) ile DedupEnabled true olmalıydı")
+	}
+	if p.Len() != 2 {
+		t.Fatalf("WithInitialSongs ile 2 şarkı yüklenmeliydi, bulunan: %d", p.Len())
+	}
+	if err := p.AddSong(s1); err != ErrDuplicateSong {
+		t.Fatalf("WithDedup aktifken aynı şarkı eklenememeli, hata: %v", err)
 	}
 }

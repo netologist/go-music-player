@@ -10,12 +10,12 @@ import (
 
 func main() {
 	// 1) İki playlist oluştur, şarkı ekle.
-	rock := mp.NewPlaylist("Rock Klasikleri", true)
+	rock := mp.NewPlaylist("Rock Klasikleri", mp.WithDedup(true))
 	must(rock.AddSong(song("r1", "Bohemian Rhapsody", "Queen")))
 	must(rock.AddSong(song("r2", "Sweet Child O' Mine", "Guns N' Roses")))
 	must(rock.AddSong(song("r3", "Back In Black", "AC/DC")))
 
-	indie := mp.NewPlaylist("Indie Keşifler", true)
+	indie := mp.NewPlaylist("Indie Keşifler", mp.WithDedup(true))
 	must(indie.AddSong(song("i1", "Midnight City", "M83")))
 	must(indie.AddSong(song("r2", "Sweet Child O' Mine", "Guns N' Roses"))) // r2 ile çakışıyor
 	must(indie.AddSong(song("i2", "Feel Good Inc.", "Gorillaz")))

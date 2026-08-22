@@ -65,7 +65,7 @@ func LoadPlaylistFromFile(path string) (*Playlist, error) {
 	// Dedup'ı yükleme sırasında kapalı tutuyoruz ki, diskte zaten var olan
 	// (belki dedup kapalıyken kaydedilmiş) tekrar eden şarkılar sessizce
 	// kaybolmasın; asıl DedupEnabled değerini en son ayarlıyoruz.
-	pl := NewPlaylist(snap.Name, false)
+	pl := NewPlaylist(snap.Name)
 	for _, s := range snap.Songs {
 		if err := pl.AddSong(s); err != nil {
 			return nil, err

@@ -11,7 +11,7 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 	dir := t.TempDir() // her test için izole, otomatik temizlenen geçici klasör
 	path := filepath.Join(dir, "playlist.json")
 
-	original := NewPlaylist("My Mix", true)
+	original := NewPlaylist("My Mix", WithDedup(true))
 	_ = original.AddSong(mustSong(t, "1", "Song A"))
 	_ = original.AddSong(mustSong(t, "2", "Song B"))
 	_ = original.AddSong(mustSong(t, "3", "Song C"))
