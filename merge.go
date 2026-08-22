@@ -1,95 +1,137 @@
 package musicplayer
 
-// DuplicatePolicy: iki playlist birleştirilirken aynı ID'ye sahip şarkılar
-// için ne yapılacağını belirleyen strateji tipidir.
+// MergeStrategy, iki playlist'in şarkı koleksiyonlarını birleştirirken
+// çakışmaları ve sıralamayı yöneten Strategy Pattern arayüzüdür.
 //
-// Neden interface/enum ve neden if-else zinciri değil: yeni bir policy
-// eklemek istendiğinde (örn. "keep-longest-duration") mevcut merge
-// fonksiyonuna dokunmadan yeni bir const + switch case eklemek yeterli.
-// Bu, Open/Closed prensibine uyar ve mülakatta "extensibility'i nasıl
-// sağladın?" sorusuna doğrudan cevap verir.
-type DuplicatePolicy int
+// Neden Strategy Pattern (Open-Closed Principle):
+// Switch-case veya if-else dallanması yerine her birleştirme mantığı
+// bağımsız bir strateji nesnesi olarak tanımlanır. Yeni bir birleştirme
+// stratejisi (örn. en uzun süreliyi seçen, sanatçıya göre önceliklendiren,
+// ya da kullanıcı tanımlı özel kurallar) eklemek için mevcut koda dokunulması
+// gerekmez.
+type MergeStrategy interface {
+	Merge(s1, s2 []Song) []Song
+}
 
-const (
-	// KeepFirst: iki playlist'te de varsa, p1'deki (ilk kaynak) versiyon kalır.
-	KeepFirst DuplicatePolicy = iota
-	// KeepLast: p2'deki (ikinci/son kaynak) versiyon kalır.
-	KeepLast
+// MergeStrategyFunc, bağımsız fonksiyonların MergeStrategy arayüzünü sağlamasını
+// kolaylaştıran fonksiyonel adapter tipidir.
+type MergeStrategyFunc func(s1, s2 []Song) []Song
+
+// Merge, MergeStrategy arayüzünü uygular.
+func (f MergeStrategyFunc) Merge(s1, s2 []Song) []Song {
+	return f(s1, s2)
+}
+
+// keepFirstStrategy: çakışan ID'lerde ilk playlist'teki (s1) şarkıyı korur.
+type keepFirstStrategy struct{}
+
+func (keepFirstStrategy) Merge(s1, s2 []Song) []Song {
+	seen := make(map[string]bool, len(s1))
+	out := make([]Song, 0, len(s1)+len(s2))
+	for _, s := range s1 {
+		out = append(out, s)
+		seen[s.ID] = true
+	}
+	for _, s := range s2 {
+		if !seen[s.ID] {
+			out = append(out, s)
+			seen[s.ID] = true
+		}
+	}
+	return out
+}
+
+// keepLastStrategy: çakışan ID'lerde ikinci playlist'teki (s2) şarkıyı korur.
+type keepLastStrategy struct{}
+
+func (keepLastStrategy) Merge(s1, s2 []Song) []Song {
+	inS2 := make(map[string]bool, len(s2))
+	for _, s := range s2 {
+		inS2[s.ID] = true
+	}
+	out := make([]Song, 0, len(s1)+len(s2))
+	for _, s := range s1 {
+		if !inS2[s.ID] {
+			out = append(out, s)
+		}
+	}
+	out = append(out, s2...)
+	return out
+}
+
+// keepBothStrategy: hiçbir şarkıyı elemez, tüm kopyaları sırayla ekler.
+type keepBothStrategy struct{}
+
+func (keepBothStrategy) Merge(s1, s2 []Song) []Song {
+	out := make([]Song, 0, len(s1)+len(s2))
+	out = append(out, s1...)
+	out = append(out, s2...)
+	return out
+}
+
+// keepLongestStrategy: çakışan ID'lerde süresi (Duration) daha uzun olan versiyonu seçer.
+type keepLongestStrategy struct{}
+
+func (keepLongestStrategy) Merge(s1, s2 []Song) []Song {
+	s2Map := make(map[string]Song, len(s2))
+	for _, s := range s2 {
+		s2Map[s.ID] = s
+	}
+
+	seen := make(map[string]bool, len(s1)+len(s2))
+	out := make([]Song, 0, len(s1)+len(s2))
+
+	for _, s := range s1 {
+		if s2Song, exists := s2Map[s.ID]; exists {
+			if s2Song.Duration > s.Duration {
+				out = append(out, s2Song)
+			} else {
+				out = append(out, s)
+			}
+		} else {
+			out = append(out, s)
+		}
+		seen[s.ID] = true
+	}
+
+	for _, s := range s2 {
+		if !seen[s.ID] {
+			out = append(out, s)
+			seen[s.ID] = true
+		}
+	}
+	return out
+}
+
+// Standart strateji singleton nesneleri
+var (
+	// KeepFirst: iki playlist'te de varsa p1'deki (ilk kaynak) versiyon kalır.
+	KeepFirst MergeStrategy = keepFirstStrategy{}
+	// KeepLast: iki playlist'te de varsa p2'deki (ikinci kaynak) versiyon kalır.
+	KeepLast MergeStrategy = keepLastStrategy{}
 	// KeepBoth: her iki kopya da tutulur (dedup uygulanmaz, iki kez görünür).
-	KeepBoth
+	KeepBoth MergeStrategy = keepBothStrategy{}
+	// KeepLongest: çakışan şarkılardan süresi (Duration) daha uzun olan kalır.
+	KeepLongest MergeStrategy = keepLongestStrategy{}
 )
 
-// MergePlaylists: p1 ve p2'yi, HER İKİ kaynaktaki göreceli sırayı koruyarak
-// birleştirir ve yeni bir *Playlist döner (p1/p2'yi mutasyona uğratmaz —
-// çağıran kod orijinal playlist'leri hâlâ kullanabilsin diye).
-//
-// "Göreceli sırayı koruma" ne demek: p1 = [A, B, C], p2 = [D, B, E] ise
-// sonuç, p1'in kendi içindeki A→B→C sırasını VE p2'nin kendi içindeki
-// D→B→E sırasını bozmadan, p1'i baştan, p2'yi p1'in ardından ekleyerek
-// oluşturulur. Duplicate (B) policy'e göre bir kez ya da iki kez yer alır.
-//
-// Zaman karmaşıklığı: O(n + m) — p1 ve p2'nin boyutları toplamı kadar,
-// çünkü her şarkı sabit sayıda işlem (map lookup + belki bir append) görür.
-// Alan karmaşıklığı: O(n + m) — sonuç playlist + geçici "görülen ID" map'i.
-func MergePlaylists(p1, p2 *Playlist, policy DuplicatePolicy) *Playlist {
-	// Neden dedup'ı burada KAPALI oluşturuyoruz: duplicate handling'i zaten
-	// policy mantığıyla kendimiz (seen/inP2 map'leriyle) explicit olarak
-	// yönetiyoruz. Eğer merged.DedupEnabled=true olsaydı ve KeepBoth
-	// policy'si çalışsaydı, AddSong kendi dedup kontrolüyle KeepBoth'un
-	// "her iki kopyayı da tut" davranışını sessizce bozardı. Playlist'in
-	// kendi dedup toggle'ı, kullanıcı sonradan bu merged playlist'e yeni
-	// şarkı eklerken kullanılsın diye ayrıca saklanır (aşağıda set edilir).
-	merged := NewPlaylist(p1.Name + "+" + p2.Name)
+// MergePlaylists: p1 ve p2'yi verilen MergeStrategy'e göre birleştirir ve
+// yeni bir *Playlist döner (p1 ve p2 mutasyona uğramaz).
+// strategy nil verilirse varsayılan olarak KeepFirst stratejisi uygulanır.
+func MergePlaylists(p1, p2 *Playlist, strategy MergeStrategy) *Playlist {
+	if strategy == nil {
+		strategy = KeepFirst
+	}
 
+	merged := NewPlaylist(p1.Name + "+" + p2.Name)
 	s1 := p1.Songs()
 	s2 := p2.Songs()
 
-	switch policy {
-	case KeepBoth:
-		// Basit durum: her iki listeyi sırayla ekle, hiçbir şeyi ele.
-		for _, s := range s1 {
-			_ = merged.AddSong(s) // KeepBoth'ta dedup zaten kapalı davranmalı
-		}
-		for _, s := range s2 {
-			_ = merged.AddSong(s)
-		}
-
-	case KeepFirst:
-		// p1'i olduğu gibi ekle (kaynak önceliği p1'de).
-		seen := make(map[string]bool, len(s1))
-		for _, s := range s1 {
-			_ = merged.AddSong(s)
-			seen[s.ID] = true
-		}
-		// p2'den sadece p1'de OLMAYAN şarkıları ekle.
-		for _, s := range s2 {
-			if !seen[s.ID] {
-				_ = merged.AddSong(s)
-				seen[s.ID] = true
-			}
-		}
-
-	case KeepLast:
-		// Önce p1'i ekle ama p2'de de varsa p1 versiyonunu SONRADAN
-		// p2 versiyonuyla değiştireceğiz; en basit ve okunabilir yol:
-		// p1'de olup p2'de de olan ID'leri önceden tespit edip p1'den
-		// o şarkıları atlamak, sonra p2'yi tam olarak eklemek.
-		inP2 := make(map[string]bool, len(s2))
-		for _, s := range s2 {
-			inP2[s.ID] = true
-		}
-		for _, s := range s1 {
-			if !inP2[s.ID] {
-				_ = merged.AddSong(s)
-			}
-		}
-		for _, s := range s2 {
-			_ = merged.AddSong(s)
-		}
+	mergedSongs := strategy.Merge(s1, s2)
+	for _, s := range mergedSongs {
+		_ = merged.AddSong(s)
 	}
 
-	// Merge işlemi bittikten SONRA, playlist'in gelecekteki AddSong
-	// çağrıları için mantıklı bir dedup varsayılanı ayarlıyoruz.
 	merged.DedupEnabled = p1.DedupEnabled || p2.DedupEnabled
 	return merged
 }

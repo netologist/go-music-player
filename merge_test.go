@@ -1,6 +1,9 @@
 package musicplayer
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func buildTestPlaylists(t *testing.T) (*Playlist, *Playlist) {
 	t.Helper()
@@ -81,6 +84,68 @@ func TestMerge_DoesNotMutateOriginals(t *testing.T) {
 	if p1.Len() != originalP1Len || p2.Len() != originalP2Len {
 		t.Fatalf("merge, orijinal playlist'lerin uzunluğunu değiştirmiş: p1=%d p2=%d", p1.Len(), p2.Len())
 	}
+}
+
+// TestMerge_KeepLongest: çakışan ID'de süresi daha uzun olan şarkının
+// seçildiğini doğrular.
+func TestMerge_KeepLongest(t *testing.T) {
+	p1 := NewPlaylist("P1")
+	s1, _ := NewSong("A", "Song A Short", "Artist", 2*time.Minute)
+	s2, _ := NewSong("B", "Song B Long", "Artist", 5*time.Minute)
+	_ = p1.AddSong(s1)
+	_ = p1.AddSong(s2)
+
+	p2 := NewPlaylist("P2")
+	s1Long, _ := NewSong("A", "Song A Long", "Artist", 4*time.Minute)
+	s2Short, _ := NewSong("B", "Song B Short", "Artist", 3*time.Minute)
+	_ = p2.AddSong(s1Long)
+	_ = p2.AddSong(s2Short)
+
+	merged := MergePlaylists(p1, p2, KeepLongest)
+	songs := merged.Songs()
+
+	a := findByID(songs, "A")
+	if a.Title != "Song A Long" || a.Duration != 4*time.Minute {
+		t.Fatalf("A için uzun olan şarkı seçilmeliydi, bulunan: %s (%v)", a.Title, a.Duration)
+	}
+
+	b := findByID(songs, "B")
+	if b.Title != "Song B Long" || b.Duration != 5*time.Minute {
+		t.Fatalf("B için uzun olan şarkı seçilmeliydi, bulunan: %s (%v)", b.Title, b.Duration)
+	}
+}
+
+// TestMerge_CustomStrategyFunc: MergeStrategyFunc adapter'ı ile
+// özel bir strategy fonksiyonunun başarıyla çalıştığını doğrular.
+func TestMerge_CustomStrategyFunc(t *testing.T) {
+	p1, p2 := buildTestPlaylists(t)
+
+	// Özel kural: Sadece ID'si tek harf ve 'A' veya 'E' olanları al
+	customStrategy := MergeStrategyFunc(func(s1, s2 []Song) []Song {
+		var out []Song
+		for _, s := range append(s1, s2...) {
+			if s.ID == "A" || s.ID == "E" {
+				out = append(out, s)
+			}
+		}
+		return out
+	})
+
+	merged := MergePlaylists(p1, p2, customStrategy)
+	ids := extractIDs(merged.Songs())
+	want := []string{"A", "E"}
+	assertIDOrder(t, ids, want)
+}
+
+// TestMerge_NilStrategy_DefaultsToKeepFirst: nil strategy verildiğinde
+// varsayılan olarak KeepFirst'ün çalıştığını doğrular.
+func TestMerge_NilStrategy_DefaultsToKeepFirst(t *testing.T) {
+	p1, p2 := buildTestPlaylists(t)
+	merged := MergePlaylists(p1, p2, nil)
+
+	ids := extractIDs(merged.Songs())
+	want := []string{"A", "B", "C", "D", "E"}
+	assertIDOrder(t, ids, want)
 }
 
 // --- test yardımcı fonksiyonları ---
