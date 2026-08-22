@@ -40,3 +40,10 @@ func WithRandSource(r *rand.Rand) PlayerOption {
 		p.rng = r
 	}
 }
+
+// WithEventListener, player'a bir olay dinleyicisi ekler (Observer Pattern).
+func WithEventListener(l EventListener) PlayerOption {
+	return func(p *Player) {
+		p.Subscribe(l)
+	}
+}

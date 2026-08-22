@@ -226,3 +226,80 @@ func TestPlayer_WithRandSource_DeterministicShuffle(t *testing.T) {
 		}
 	}
 }
+
+// TestPlayer_ObserverPattern_EventNotifications: Observer pattern dinleyicilerinin
+// durum ve parça değişikliklerinde doğru olayları aldığını doğrular.
+func TestPlayer_ObserverPattern_EventNotifications(t *testing.T) {
+	p := buildTestPlayer(t)
+
+	var receivedEvents []PlayerEvent
+	unsubscribe := p.Subscribe(func(event PlayerEvent) {
+		receivedEvents = append(receivedEvents, event)
+	})
+	defer unsubscribe()
+
+	_ = p.Play()  // StateChanged
+	_ = p.Next()  // TrackChanged
+	_ = p.Pause() // StateChanged
+
+	if len(receivedEvents) != 3 {
+		t.Fatalf("beklenen 3 olay, alınan: %d", len(receivedEvents))
+	}
+
+	if receivedEvents[0].Type != EventStateChanged || receivedEvents[0].State != StatePlaying {
+		t.Fatalf("ilk olay StateChanged (Playing) olmalıydı, alınan: %+v", receivedEvents[0])
+	}
+
+	if receivedEvents[1].Type != EventTrackChanged || receivedEvents[1].CurrentSong.ID != "2" {
+		t.Fatalf("ikinci olay TrackChanged (ID=2) olmalıydı, alınan: %+v", receivedEvents[1])
+	}
+
+	if receivedEvents[2].Type != EventStateChanged || receivedEvents[2].State != StatePaused {
+		t.Fatalf("üçüncü olay StateChanged (Paused) olmalıydı, alınan: %+v", receivedEvents[2])
+	}
+}
+
+// TestPlayer_ObserverPattern_Unsubscribe: Dinleyicinin unsubscribe sonrası
+// artık bildirim almadığını doğrular.
+func TestPlayer_ObserverPattern_Unsubscribe(t *testing.T) {
+	p := buildTestPlayer(t)
+
+	count := 0
+	unsubscribe := p.Subscribe(func(event PlayerEvent) {
+		count++
+	})
+
+	_ = p.Play()
+	if count != 1 {
+		t.Fatalf("Play sonrası count 1 olmalıydı, bulunan: %d", count)
+	}
+
+	unsubscribe()
+	_ = p.Next()
+	_ = p.Pause()
+
+	if count != 1 {
+		t.Fatalf("Unsubscribe sonrası count değişmemeliydi, bulunan: %d", count)
+	}
+}
+
+// TestPlayer_ObserverPattern_DeadlockFreeCallback: Dinleyici fonksiyonu içinden
+// Player metodları çağrıldığında kilitlenmenin (deadlock) OLMADIĞINI doğrular.
+func TestPlayer_ObserverPattern_DeadlockFreeCallback(t *testing.T) {
+	p := buildTestPlayer(t)
+
+	stateInsideCallback := StateStopped
+	unsubscribe := p.Subscribe(func(event PlayerEvent) {
+		// Callback içinden Player'ın State() ve CurrentSong() metodları çağrılıyor.
+		// Eğer bildirim kilit altında yapılsaydı burada recursive lock / deadlock oluşurdu.
+		stateInsideCallback = p.State()
+		_, _ = p.CurrentSong()
+	})
+	defer unsubscribe()
+
+	_ = p.Play()
+
+	if stateInsideCallback != StatePlaying {
+		t.Fatalf("callback içinden p.State() okunamadı veya yanlış döndü: %v", stateInsideCallback)
+	}
+}

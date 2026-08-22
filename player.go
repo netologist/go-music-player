@@ -42,19 +42,21 @@ var ErrNotPlaying = errors.New("player şu an çalmıyor")
 // görünürdü. ID bazlı takip, shuffle/reorder sonrası doğru şarkıyı
 // bulmamızı garantiler (bkz. syncCurrentIndex).
 type Player struct {
-	mu            sync.Mutex
-	playlist      *Playlist
-	queue         []Song
-	originalOrder []Song
-	currentIndex  int
-	currentSongID string
-	state         PlaybackState
-	repeatMode    RepeatMode
-	rng           *rand.Rand
+	mu             sync.Mutex
+	playlist       *Playlist
+	queue          []Song
+	originalOrder  []Song
+	currentIndex   int
+	currentSongID  string
+	state          PlaybackState
+	repeatMode     RepeatMode
+	rng            *rand.Rand
+	listeners      map[int]EventListener
+	nextListenerID int
 }
 
 // NewPlayer, playlist'in o anki halinden bir snapshot alarak player'ı kurar.
-// PlayerOption ile repeatMode ve rand generator gibi ayarlar yapılandırılabilir.
+// PlayerOption ile repeatMode, rand generator ve event listener gibi ayarlar yapılandırılabilir.
 func NewPlayer(playlist *Playlist, opts ...PlayerOption) *Player {
 	songs := playlist.Songs()
 	p := &Player{
@@ -64,6 +66,7 @@ func NewPlayer(playlist *Playlist, opts ...PlayerOption) *Player {
 		currentIndex:  0,
 		state:         StateStopped,
 		repeatMode:    RepeatOff,
+		listeners:     make(map[int]EventListener),
 	}
 	if len(songs) > 0 {
 		p.currentSongID = songs[0].ID
@@ -79,12 +82,13 @@ func NewPlayer(playlist *Playlist, opts ...PlayerOption) *Player {
 // varsa "current" konumu korunur; yoksa (silinmişse) başa (index 0) döner.
 func (p *Player) Refresh() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	songs := p.playlist.Songs()
 	p.queue = songs
 	p.originalOrder = append([]Song(nil), songs...)
 	p.syncCurrentIndexLocked()
+	evt, cbs := p.snapshotEventLocked(EventQueueUpdated)
+	p.mu.Unlock()
+	dispatchEvent(evt, cbs)
 }
 
 // syncCurrentIndexLocked: currentSongID'yi queue içinde arayıp currentIndex'i
@@ -110,22 +114,28 @@ func (p *Player) syncCurrentIndexLocked() {
 // Play: durumu Playing yapar. Playlist boşsa hata döner.
 func (p *Player) Play() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if len(p.queue) == 0 {
+		p.mu.Unlock()
 		return ErrEmptyPlaylist
 	}
 	p.state = StatePlaying
+	evt, cbs := p.snapshotEventLocked(EventStateChanged)
+	p.mu.Unlock()
+	dispatchEvent(evt, cbs)
 	return nil
 }
 
 // Pause: sadece Playing durumundayken anlamlıdır.
 func (p *Player) Pause() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.state != StatePlaying {
+		p.mu.Unlock()
 		return ErrNotPlaying
 	}
 	p.state = StatePaused
+	evt, cbs := p.snapshotEventLocked(EventStateChanged)
+	p.mu.Unlock()
+	dispatchEvent(evt, cbs)
 	return nil
 }
 
@@ -139,20 +149,24 @@ func (p *Player) Pause() error {
 // şarkı yeniden başlar" davranışına karşılık gelir.
 func (p *Player) Next() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if len(p.queue) == 0 {
+		p.mu.Unlock()
 		return ErrEmptyPlaylist
 	}
 
 	if p.repeatMode == RepeatOne {
-		// Aynı şarkıda kal, sadece "yeniden başlat" anlamına gelir.
+		evt, cbs := p.snapshotEventLocked(EventTrackChanged)
+		p.mu.Unlock()
+		dispatchEvent(evt, cbs)
 		return nil
 	}
 
 	if p.currentIndex+1 < len(p.queue) {
 		p.currentIndex++
 		p.currentSongID = p.queue[p.currentIndex].ID
+		evt, cbs := p.snapshotEventLocked(EventTrackChanged)
+		p.mu.Unlock()
+		dispatchEvent(evt, cbs)
 		return nil
 	}
 
@@ -161,8 +175,12 @@ func (p *Player) Next() error {
 	case RepeatAll:
 		p.currentIndex = 0
 		p.currentSongID = p.queue[0].ID
+		evt, cbs := p.snapshotEventLocked(EventTrackChanged)
+		p.mu.Unlock()
+		dispatchEvent(evt, cbs)
 		return nil
 	default: // RepeatOff
+		p.mu.Unlock()
 		return ErrEndOfPlaylist
 	}
 }
@@ -170,19 +188,24 @@ func (p *Player) Next() error {
 // Previous: Next'in simetriği. Başa gelindiğinde RepeatAll ile sona sarar.
 func (p *Player) Previous() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if len(p.queue) == 0 {
+		p.mu.Unlock()
 		return ErrEmptyPlaylist
 	}
 
 	if p.repeatMode == RepeatOne {
+		evt, cbs := p.snapshotEventLocked(EventTrackChanged)
+		p.mu.Unlock()
+		dispatchEvent(evt, cbs)
 		return nil
 	}
 
 	if p.currentIndex-1 >= 0 {
 		p.currentIndex--
 		p.currentSongID = p.queue[p.currentIndex].ID
+		evt, cbs := p.snapshotEventLocked(EventTrackChanged)
+		p.mu.Unlock()
+		dispatchEvent(evt, cbs)
 		return nil
 	}
 
@@ -190,8 +213,12 @@ func (p *Player) Previous() error {
 	case RepeatAll:
 		p.currentIndex = len(p.queue) - 1
 		p.currentSongID = p.queue[p.currentIndex].ID
+		evt, cbs := p.snapshotEventLocked(EventTrackChanged)
+		p.mu.Unlock()
+		dispatchEvent(evt, cbs)
 		return nil
 	default:
+		p.mu.Unlock()
 		return ErrEndOfPlaylist
 	}
 }
@@ -199,8 +226,10 @@ func (p *Player) Previous() error {
 // SetRepeatMode: repeat modunu değiştirir.
 func (p *Player) SetRepeatMode(mode RepeatMode) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.repeatMode = mode
+	evt, cbs := p.snapshotEventLocked(EventRepeatModeChanged)
+	p.mu.Unlock()
+	dispatchEvent(evt, cbs)
 }
 
 // Shuffle: Fisher-Yates algoritmasıyla queue'yu karıştırır.
@@ -215,8 +244,6 @@ func (p *Player) SetRepeatMode(mode RepeatMode) {
 // bozulmamasını garantiler.
 func (p *Player) Shuffle() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	for i := len(p.queue) - 1; i > 0; i-- {
 		var j int
 		if p.rng != nil {
@@ -227,14 +254,19 @@ func (p *Player) Shuffle() {
 		p.queue[i], p.queue[j] = p.queue[j], p.queue[i]
 	}
 	p.syncCurrentIndexLocked()
+	evt, cbs := p.snapshotEventLocked(EventQueueUpdated)
+	p.mu.Unlock()
+	dispatchEvent(evt, cbs)
 }
 
 // RestoreOrder: shuffle öncesi (orijinal playlist) sırasına döner.
 func (p *Player) RestoreOrder() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.queue = append([]Song(nil), p.originalOrder...)
 	p.syncCurrentIndexLocked()
+	evt, cbs := p.snapshotEventLocked(EventQueueUpdated)
+	p.mu.Unlock()
+	dispatchEvent(evt, cbs)
 }
 
 // CurrentSong: o an "çalıyor" olarak işaretli şarkıyı döner.
@@ -278,4 +310,54 @@ func (p *Player) QueueSongs() []Song {
 	out := make([]Song, len(p.queue))
 	copy(out, p.queue)
 	return out
+}
+
+// Subscribe: Player olaylarını dinlemek için bir EventListener kaydeder (Observer Pattern).
+// Dönen unsubscribe fonksiyonu çağrılarak dinleme sonlandırılabilir.
+func (p *Player) Subscribe(l EventListener) (unsubscribe func()) {
+	if l == nil {
+		return func() {}
+	}
+	p.mu.Lock()
+	if p.listeners == nil {
+		p.listeners = make(map[int]EventListener)
+	}
+	id := p.nextListenerID
+	p.nextListenerID++
+	p.listeners[id] = l
+	p.mu.Unlock()
+
+	return func() {
+		p.mu.Lock()
+		delete(p.listeners, id)
+		p.mu.Unlock()
+	}
+}
+
+// snapshotEventLocked: p.mu kilitliyken mevcut durumu ve dinleyicileri kopyalar.
+// Kilit dışına çıkıldıktan sonra dinleyiciler çağrılır (deadlock-free notification).
+func (p *Player) snapshotEventLocked(eventType EventType) (PlayerEvent, []EventListener) {
+	var cur Song
+	if len(p.queue) > 0 && p.currentIndex < len(p.queue) {
+		cur = p.queue[p.currentIndex]
+	}
+	evt := PlayerEvent{
+		Type:         eventType,
+		State:        p.state,
+		CurrentSong:  cur,
+		CurrentIndex: p.currentIndex,
+		RepeatMode:   p.repeatMode,
+		QueueLength:  len(p.queue),
+	}
+	cbs := make([]EventListener, 0, len(p.listeners))
+	for _, l := range p.listeners {
+		cbs = append(cbs, l)
+	}
+	return evt, cbs
+}
+
+func dispatchEvent(evt PlayerEvent, cbs []EventListener) {
+	for _, cb := range cbs {
+		cb(evt)
+	}
 }

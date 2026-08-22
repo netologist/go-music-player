@@ -27,12 +27,13 @@ func main() {
 	merged := mp.MergePlaylists(rock, indie, mp.KeepFirst)
 	fmt.Println("Merged (KeepFirst):", ids(merged))
 
-	// 3) Player oluştur, oynatmayı başlat, birkaç kontrolü dene.
-	player := mp.NewPlayer(merged)
+	// 3) Player oluştur, Observer listener bağla, oynatmayı başlat.
+	player := mp.NewPlayer(merged, mp.WithEventListener(func(e mp.PlayerEvent) {
+		fmt.Printf("  [Event: %s] Şarkı: %s, State: %v\n", e.Type, e.CurrentSong.Title, e.State)
+	}))
 	must(player.Play())
 	cur, _ := player.CurrentSong()
 	fmt.Println("Çalıyor:", cur.Title)
-
 	must(player.Next())
 	cur, _ = player.CurrentSong()
 	fmt.Println("Next sonrası:", cur.Title)
