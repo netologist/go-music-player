@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -43,20 +44,27 @@ func main() {
 	cur, _ = player.CurrentSong()
 	fmt.Println("Shuffle sonrası çalıyor:", cur.Title)
 
-	// 4) Diske kaydet.
-	if err := merged.SaveToFile("/tmp/merged_playlist.json"); err != nil {
-		fmt.Println("kaydetme hatası:", err)
-		os.Exit(1)
-	}
-	fmt.Println("Playlist /tmp/merged_playlist.json dosyasına kaydedildi.")
-
-	// 5) Diskten geri yükle ve doğrula.
-	loaded, err := mp.LoadPlaylistFromFile("/tmp/merged_playlist.json")
+	// 4) Repository Pattern ile kaydet ve yükle.
+	repo, err := mp.NewJSONFileRepository("/tmp/musicplayer_repo")
 	if err != nil {
-		fmt.Println("yükleme hatası:", err)
+		fmt.Println("repo hatası:", err)
 		os.Exit(1)
 	}
-	fmt.Println("Diskten yüklenen playlist:", ids(loaded))
+
+	ctx := context.Background()
+	if err := repo.Save(ctx, merged); err != nil {
+		fmt.Println("repo kaydetme hatası:", err)
+		os.Exit(1)
+	}
+	fmt.Println("Playlist Repository (JSONFileRepository) ile kaydedildi.")
+
+	// 5) Repository'den geri yükle ve doğrula.
+	loaded, err := repo.Load(ctx, merged.Name)
+	if err != nil {
+		fmt.Println("repo yükleme hatası:", err)
+		os.Exit(1)
+	}
+	fmt.Println("Repository'den yüklenen playlist:", ids(loaded))
 }
 
 func song(id, title, artist string) mp.Song {
