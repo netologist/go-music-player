@@ -10,16 +10,20 @@ import (
 )
 
 func main() {
-	// 1) İki playlist oluştur, şarkı ekle.
-	rock := mp.NewPlaylist("Rock Klasikleri", mp.WithDedup(true))
-	must(rock.AddSong(song("r1", "Bohemian Rhapsody", "Queen")))
-	must(rock.AddSong(song("r2", "Sweet Child O' Mine", "Guns N' Roses")))
-	must(rock.AddSong(song("r3", "Back In Black", "AC/DC")))
+	// 1) Builder Pattern ile iki playlist oluştur ve şarkıları ekle.
+	rock := mp.NewPlaylistBuilder("Rock Klasikleri").
+		WithDedup(true).
+		AddNewSong("r1", "Bohemian Rhapsody", "Queen", 6*time.Minute).
+		AddNewSong("r2", "Sweet Child O' Mine", "Guns N' Roses", 5*time.Minute).
+		AddNewSong("r3", "Back In Black", "AC/DC", 4*time.Minute).
+		MustBuild()
 
-	indie := mp.NewPlaylist("Indie Keşifler", mp.WithDedup(true))
-	must(indie.AddSong(song("i1", "Midnight City", "M83")))
-	must(indie.AddSong(song("r2", "Sweet Child O' Mine", "Guns N' Roses"))) // r2 ile çakışıyor
-	must(indie.AddSong(song("i2", "Feel Good Inc.", "Gorillaz")))
+	indie := mp.NewPlaylistBuilder("Indie Keşifler").
+		WithDedup(true).
+		AddNewSong("i1", "Midnight City", "M83", 4*time.Minute).
+		AddNewSong("r2", "Sweet Child O' Mine", "Guns N' Roses", 5*time.Minute). // r2 ile çakışıyor
+		AddNewSong("i2", "Feel Good Inc.", "Gorillaz", 3*time.Minute).
+		MustBuild()
 
 	fmt.Println("Rock playlist:", ids(rock))
 	fmt.Println("Indie playlist:", ids(indie))
