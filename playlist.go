@@ -177,6 +177,8 @@ func (p *Playlist) At(index int) (Song, error) {
 }
 
 // Iterator: Playlist üzerinde gezinmek için bir SongIterator döner (Iterator Pattern).
+//
+// Deprecated: Bunun yerine ForEach metodu tercih edilmelidir.
 func (p *Playlist) Iterator() SongIterator {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

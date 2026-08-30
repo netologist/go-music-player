@@ -29,7 +29,7 @@ Projede uygulanan 6 temel tasarım deseni ve çözdükleri mimari problemler:
 | **Strategy Pattern** | `merge.go` | Çakışan şarkı birleştirme algoritmalarını `switch-case` dallanmasından kurtarır. `Open-Closed Principle (OCP)` uyarınca çekirdek koda dokunmadan yeni stratejiler eklenmesini sağlar. |
 | **Observer Pattern** | `events.go`, `player.go` | `Player` bileşenini UI, loglama, ses motoru ve analitik katmanlarından tamamen soyutlar. Durum değişikliklerini olay güdümlü (`Event-Driven`) iletir. |
 | **Repository & Adapter Pattern** | `repository.go` | `Dependency Inversion Principle (DIP)` gereği domain modelini somut dosya I/O işlemlerinden ayırır. `JSONFileRepository` ve `MemoryRepository` adaptörleri sunar. |
-| **Iterator Pattern** | `iterator.go`, `playlist.go` | Koleksiyonun iç yapısını dışarı açmadan ve her seferinde tüm listeyi kopyalama (`Songs()`) bellek maliyeti oluşturmadan eleman bazlı akış/gezinme sağlar. |
+| **Iterator Pattern** | `song_iterator.go`, `playlist.go` | Koleksiyonun iç yapısını dışarı açmadan ve her seferinde tüm listeyi kopyalama (`Songs()`) bellek maliyeti oluşturmadan eleman bazlı akış/gezinme sağlar. |
 | **Builder Pattern** | `builder.go` | Çok sayıda alana sahip `Song` ve `Playlist` nesnelerinin akıcı metot zinciri (`fluent interface`) ile inşa edilmesini, doğrulanmasını ve test fixture'larının kolay oluşturulmasını sağlar. |
 
 ---
@@ -66,8 +66,8 @@ Projede uygulanan 6 temel tasarım deseni ve çözdükleri mimari problemler:
 ├── errors.go             # Sentinel hata tanımları (ErrDuplicateSong, ErrSongNotFound vb.)
 ├── events.go             # Observer Pattern (EventType, PlayerEvent, EventListener)
 ├── go.mod                # Go modül tanımı
-├── iterator.go           # Iterator Pattern (SongIterator, sliceSongIterator)
-├── iterator_test.go      # Iterator, ForEach ve Filter birim testleri
+├── song_iterator.go      # Iterator Pattern (SongIterator, sliceSongIterator)
+├── song_iterator_test.go # Iterator, ForEach ve Filter birim testleri
 ├── merge.go              # Strategy Pattern (MergeStrategy, KeepFirst, KeepLast, KeepBoth, KeepLongest)
 ├── merge_test.go         # Merge stratejileri birim testleri
 ├── options.go            # Functional Options Pattern (PlaylistOption, PlayerOption)

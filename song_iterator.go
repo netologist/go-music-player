@@ -7,6 +7,8 @@ package musicplayer
 // Koleksiyonun iç veri yapısını (slice) dış dünyaya açmadan, çağıran koda
 // tek tek eleman tüketme imkânı sunar. Tüm slice'ı tek seferde kopyalamak (Songs())
 // yerine, ihtiyaç duyuldukça eleman okunmasını ve erken çıkış yapılabilmesini sağlar.
+//
+// Deprecated: SongIterator yerine ForEach metodu tercih edilmelidir.
 type SongIterator interface {
 	// HasNext, sırada tüketilmeyi bekleyen şarkı olup olmadığını kontrol eder.
 	HasNext() bool
@@ -30,6 +32,8 @@ type sliceSongIterator struct {
 }
 
 // NewSongIterator, verilen şarkı dilimi üzerinde bir SongIterator oluşturur.
+//
+// Deprecated: SongIterator yerine ForEach metodu tercih edilmelidir.
 func NewSongIterator(songs []Song) SongIterator {
 	cp := make([]Song, len(songs))
 	copy(cp, songs)

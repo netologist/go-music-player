@@ -314,6 +314,8 @@ func (p *Player) QueueSongs() []Song {
 
 // QueueIterator: Player'ın o anki oynatma sırası üzerinde gezinmek için
 // bir SongIterator döner (Iterator Pattern).
+//
+// Deprecated: Bunun yerine QueueSongs metodu tercih edilmelidir.
 func (p *Player) QueueIterator() SongIterator {
 	p.mu.Lock()
 	defer p.mu.Unlock()
