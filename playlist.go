@@ -1,33 +1,35 @@
 package musicplayer
 
-import "sync"
+import (
+	"iter"
+	"sync"
+)
 
-// Playlist, sıralı bir şarkı koleksiyonudur.
+// Playlist is an ordered collection of songs.
 //
-// Veri yapısı kararı (linked list vs slice):
-//   - Slice seçildi çünkü gerçek dünyada bir playlist onlarca-binlerce şarkı
-//     içerir (milyonlarca değil), bu ölçekte slice'ın cache-locality avantajı
-//     ve Go'nun idiomatik koleksiyon tipi olması, linked list'in O(1) orta-nokta
-//     silme avantajından daha değerlidir.
-//   - Remove/Move işlemleri slice'ta O(n) (shift gerekir); linked list'te bu O(1)
-//     olurdu AMA node referansına zaten sahip olmanız gerekir (aksi halde
-//     düğümü bulmak yine O(n)). Bizim node referansımız yok, sadece song ID
-//     ile arama yapıyoruz, o yüzden linked list'in teorik avantajı pratikte
-//     kaybolur.
-//   - indexByID map'i O(1) "bu ID playlist'te var mı" / "hangi index'te"
-//     sorgularını sağlar; bu, dedup kontrolü ve MoveSong(id, ...) için kritik.
-//     Bedeli: her Remove/Move sonrası map'i güncel tutmak (aşağıdaki
-//     reindexFrom fonksiyonu bunu yapar).
+// Data structure decision (linked list vs slice):
+//   - Slice was chosen because real-world playlists contain tens to thousands
+//     of songs (not millions). At that scale, slice's cache-locality advantage
+//     and its status as Go's idiomatic collection type outweigh the O(1)
+//     mid-point removal advantage of a linked list.
+//   - Remove/Move are O(n) on a slice (shift required); a linked list would make
+//     them O(1) BUT only if you already hold a node reference (otherwise finding
+//     the node is O(n) anyway). We search by song ID, so the linked list's
+//     theoretical advantage disappears in practice.
+//   - The indexByID map provides O(1) "does this ID exist?" / "what index is it at?"
+//     lookups, which are critical for dedup checks and MoveSong(id, ...).
+//     The cost: the map must be kept in sync after every Remove/Move
+//     (see reindexFrom below).
 type Playlist struct {
 	mu           sync.RWMutex
 	Name         string
 	songs        []Song
-	indexByID    map[string]int // songID -> songs slice'taki güncel index
+	indexByID    map[string]int // songID -> current index in the songs slice
 	DedupEnabled bool
 }
 
-// NewPlaylist bir playlist oluşturur. Functional Options Pattern kullanılarak
-// WithDedup veya WithInitialSongs gibi opsiyonlarla esnek şekilde yapılandırılabilir.
+// NewPlaylist creates a playlist. It can be configured flexibly via Functional
+// Options Pattern — e.g. WithDedup or WithInitialSongs.
 func NewPlaylist(name string, opts ...PlaylistOption) *Playlist {
 	p := &Playlist{
 		Name:         name,
@@ -41,8 +43,8 @@ func NewPlaylist(name string, opts ...PlaylistOption) *Playlist {
 	return p
 }
 
-// AddSong: O(1) amortized (append) + O(1) map insert.
-// Dedup açıksa ve ID zaten varsa ErrDuplicateSong döner.
+// AddSong is O(1) amortized (append) + O(1) map insert.
+// Returns ErrDuplicateSong if dedup is enabled and the ID already exists.
 func (p *Playlist) AddSong(s Song) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -58,9 +60,8 @@ func (p *Playlist) AddSong(s Song) error {
 	return nil
 }
 
-// RemoveSong: ID ile silme. O(n) çünkü silinen index'ten sonraki
-// tüm elemanların hem slice'ta kayması hem de map'te index'lerinin
-// güncellenmesi gerekir.
+// RemoveSong removes a song by ID. O(n) because elements after the removed
+// index must be shifted in the slice and their map entries updated.
 func (p *Playlist) RemoveSong(id string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -72,7 +73,7 @@ func (p *Playlist) RemoveSong(id string) error {
 	return p.removeAtLocked(idx)
 }
 
-// RemoveAt: index ile silme (lock alır, internal removeAtLocked'ı çağırır).
+// RemoveAt removes a song by index (acquires the lock, then calls removeAtLocked).
 func (p *Playlist) RemoveAt(index int) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -83,10 +84,10 @@ func (p *Playlist) RemoveAt(index int) error {
 	return p.removeAtLocked(index)
 }
 
-// removeAtLocked: mutex'in ZATEN alınmış olduğunu varsayar (private helper).
-// Neden ayrı bir "Locked" fonksiyon: RemoveSong ve RemoveAt aynı mantığı
-// paylaşıyor ama farklı girdilerle (id vs index) çağrılıyor; kilidi iki kez
-// almamak (deadlock riski) için ortak mantığı kilitsiz bir helper'a çıkardık.
+// removeAtLocked assumes the mutex is ALREADY held (private helper).
+// Why a separate "Locked" function: RemoveSong and RemoveAt share the same
+// logic but are called with different inputs (id vs index); factoring the
+// shared logic into a lock-free helper avoids double-locking (deadlock risk).
 func (p *Playlist) removeAtLocked(index int) error {
 	removedID := p.songs[index].ID
 	p.songs = append(p.songs[:index], p.songs[index+1:]...)
@@ -95,17 +96,16 @@ func (p *Playlist) removeAtLocked(index int) error {
 	return nil
 }
 
-// reindexFrom: bir silme/taşıma sonrası index >= from olan tüm şarkıların
-// map'teki index bilgisini günceller. O(n) maliyeti, dedup lookup'ının
-// O(1) kalabilmesinin bedelidir.
+// reindexFrom updates the map entries for all songs at index >= from after a
+// remove or move. O(n) cost — the price for keeping O(1) dedup lookups.
 func (p *Playlist) reindexFrom(from int) {
 	for i := from; i < len(p.songs); i++ {
 		p.indexByID[p.songs[i].ID] = i
 	}
 }
 
-// MoveSong: bir şarkıyı ID'siyle bulup yeni pozisyona taşır (reorder).
-// O(n) — hem eski hem yeni pozisyon arasındaki elemanlar kayar.
+// MoveSong locates a song by ID and moves it to a new position (reorder).
+// O(n) — elements between the old and new positions must shift.
 func (p *Playlist) MoveSong(id string, newIndex int) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -122,15 +122,15 @@ func (p *Playlist) MoveSong(id string, newIndex int) error {
 	}
 
 	song := p.songs[oldIndex]
-	// Önce eski pozisyondan çıkar.
+	// Remove from old position.
 	p.songs = append(p.songs[:oldIndex], p.songs[oldIndex+1:]...)
-	// Sonra yeni pozisyona ekle (insert).
+	// Insert at new position.
 	p.songs = append(p.songs, Song{})
 	copy(p.songs[newIndex+1:], p.songs[newIndex:])
 	p.songs[newIndex] = song
 
-	// oldIndex ile newIndex arasındaki her şey kaymış olabilir, en garantili
-	// yol tüm map'i baştan kurmak yerine min(old,new)'dan itibaren reindex.
+	// Everything between min(old,new) and max(old,new) may have shifted;
+	// the safest approach is to reindex from the smaller of the two indices.
 	from := oldIndex
 	if newIndex < from {
 		from = newIndex
@@ -139,9 +139,9 @@ func (p *Playlist) MoveSong(id string, newIndex int) error {
 	return nil
 }
 
-// Songs: dışarıya KOPYA döner. Neden kopya: çağıran kod slice'ı elinde
-// tutup lock dışında değiştirirse (append, index atama gibi) internal
-// state ile senkron bozulur / veri yarışı oluşabilir. Kopya bunu engeller.
+// Songs returns a COPY of the internal slice. Reason: if the caller holds the
+// slice and mutates it outside the lock (append, index assignment), it would
+// corrupt internal state or cause a data race. A copy prevents this.
 func (p *Playlist) Songs() []Song {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -151,14 +151,14 @@ func (p *Playlist) Songs() []Song {
 	return out
 }
 
-// Len: O(1).
+// Len is O(1).
 func (p *Playlist) Len() int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return len(p.songs)
 }
 
-// Contains: O(1) map lookup.
+// Contains is an O(1) map lookup.
 func (p *Playlist) Contains(id string) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -166,7 +166,7 @@ func (p *Playlist) Contains(id string) bool {
 	return ok
 }
 
-// At: index ile tekil şarkı okuma. O(1).
+// At returns a single song by index. O(1).
 func (p *Playlist) At(index int) (Song, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -176,37 +176,29 @@ func (p *Playlist) At(index int) (Song, error) {
 	return p.songs[index], nil
 }
 
-// Iterator: Playlist üzerinde gezinmek için bir SongIterator döner (Iterator Pattern).
-//
-// Deprecated: Bunun yerine ForEach metodu tercih edilmelidir.
-func (p *Playlist) Iterator() SongIterator {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return NewSongIterator(p.songs)
+// All returns an iter.Seq2 for ranging over the playlist with index and Song.
+// Runs under RLock; the lock is released safely on early exit (break).
+// Zero extra allocations (0-alloc).
+func (p *Playlist) All() iter.Seq2[int, Song] {
+	return LockedSeq2(p.mu.RLocker(), func() []Song { return p.songs })
 }
 
-// ForEach, playlist'teki her şarkı için verilen fonksiyonu çalıştırır.
-// Fonksiyon false dönerse döngü erken sonlanır (short-circuiting).
-// Kilit altında çalıştığı için ekstra slice kopyalama maliyeti oluşturmaz (O(1) ekstra bellek).
+// Values returns an iter.Seq for ranging over the playlist (Song only).
+// Runs under RLock; the lock is released safely on early exit (break).
+// Zero extra allocations (0-alloc).
+func (p *Playlist) Values() iter.Seq[Song] {
+	return LockedSeq(p.mu.RLocker(), func() []Song { return p.songs })
+}
+
+// ForEach runs the given function for every song in the playlist.
+// The loop exits early if fn returns false (short-circuiting).
+// Uses the generic ForEach under the lock; produces 0 extra allocations.
 func (p *Playlist) ForEach(fn func(index int, song Song) bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	for i, s := range p.songs {
-		if !fn(i, s) {
-			break
-		}
-	}
+	ForEach(p.All(), fn)
 }
 
-// Filter, verilen koşula uyan şarkıları içeren yeni bir Song dilimi döner.
+// Filter returns a new Song slice containing only the songs that match the predicate.
+// Uses the generic Filter under the lock.
 func (p *Playlist) Filter(predicate func(Song) bool) []Song {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	var out []Song
-	for _, s := range p.songs {
-		if predicate(s) {
-			out = append(out, s)
-		}
-	}
-	return out
+	return Filter(p.Values(), predicate)
 }

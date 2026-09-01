@@ -2,11 +2,12 @@ package musicplayer
 
 import (
 	"errors"
+	"iter"
 	"math/rand/v2"
 	"sync"
 )
 
-// PlaybackState: Player'ın o anki oynatma durumu.
+// PlaybackState represents the current playback state of the Player.
 type PlaybackState int
 
 const (
@@ -15,32 +16,31 @@ const (
 	StatePaused
 )
 
-// RepeatMode: playlist'in sonuna gelindiğinde (veya Next/Previous
-// çağrıldığında) davranışı belirler.
+// RepeatMode controls the behaviour when the end (or beginning) of the queue is reached.
 type RepeatMode int
 
 const (
-	RepeatOff RepeatMode = iota // sonda dur
-	RepeatOne                   // aynı şarkıyı tekrar et
-	RepeatAll                   // başa dön
+	RepeatOff RepeatMode = iota // stop at the end
+	RepeatOne                   // repeat the current track
+	RepeatAll                   // wrap around to the beginning
 )
 
-var ErrEndOfPlaylist = errors.New("playlist sonuna gelindi (repeat off)")
-var ErrNotPlaying = errors.New("player şu an çalmıyor")
+var ErrEndOfPlaylist = errors.New("reached end of playlist (repeat off)")
+var ErrNotPlaying = errors.New("player is not currently playing")
 
-// Player, bir Playlist üzerinde oynatma DURUMUNU yönetir.
+// Player manages the playback STATE over a Playlist.
 //
-// Tasarım kararı: Player, Playlist'in kendi song slice'ını DEĞİL, kendi
-// "queue" kopyasını tutar. Neden: shuffle işlemi playlist'in gerçek
-// sırasını bozmamalı (kullanıcı playlist'i başka bir ekranda normal
-// sırada görmeye devam edebilmeli). Shuffle sadece Player'ın oynatma
-// sırasını etkiler; RestoreOrder ile orijinal playlist sırasına dönülür.
+// Design decision: Player holds its own "queue" copy of the playlist's song
+// slice rather than a direct reference to it. Reason: shuffle must not corrupt
+// the playlist's canonical order (the user may still view the playlist in its
+// original order on another screen). Shuffle only affects the Player's playback
+// order; RestoreOrder returns to the original playlist sequence.
 //
-// currentSongID (index değil, ID) ile "şu an çalan şarkı" takip edilir.
-// Neden index değil ID: shuffle sonrası aynı şarkının index'i değişir;
-// eğer sadece index tutsaydık shuffle sonrası yanlış şarkı "current"
-// görünürdü. ID bazlı takip, shuffle/reorder sonrası doğru şarkıyı
-// bulmamızı garantiler (bkz. syncCurrentIndex).
+// The current track is tracked by currentSongID (not index). Reason: after a
+// shuffle the index of the same song changes; if we only stored the index,
+// shuffle would make the wrong song appear as "current". ID-based tracking
+// guarantees the correct song is found after any shuffle/reorder (see
+// syncCurrentIndexLocked).
 type Player struct {
 	mu             sync.Mutex
 	playlist       *Playlist
@@ -55,8 +55,8 @@ type Player struct {
 	nextListenerID int
 }
 
-// NewPlayer, playlist'in o anki halinden bir snapshot alarak player'ı kurar.
-// PlayerOption ile repeatMode, rand generator ve event listener gibi ayarlar yapılandırılabilir.
+// NewPlayer builds a player by taking a snapshot of the playlist's current state.
+// PlayerOption functions can configure repeatMode, a rand source, and event listeners.
 func NewPlayer(playlist *Playlist, opts ...PlayerOption) *Player {
 	songs := playlist.Songs()
 	p := &Player{
@@ -77,9 +77,10 @@ func NewPlayer(playlist *Playlist, opts ...PlayerOption) *Player {
 	return p
 }
 
-// Refresh: playlist dışarıdan değiştiyse (şarkı eklendi/silindi), player'ın
-// queue'sunu yeniden senkronize eder. Şu an çalan şarkı hâlâ playlist'te
-// varsa "current" konumu korunur; yoksa (silinmişse) başa (index 0) döner.
+// Refresh re-synchronises the player's queue when the underlying playlist has
+// changed externally (songs added or removed). If the currently playing song
+// still exists in the playlist its position is preserved; otherwise the player
+// resets to index 0.
 func (p *Player) Refresh() {
 	p.mu.Lock()
 	songs := p.playlist.Songs()
@@ -91,10 +92,10 @@ func (p *Player) Refresh() {
 	dispatchEvent(evt, cbs)
 }
 
-// syncCurrentIndexLocked: currentSongID'yi queue içinde arayıp currentIndex'i
-// buna göre günceller. Bulunamazsa (şarkı silinmiş) index 0'a döner.
-// O(n) — playlist büyüklüğüne bağlı, ama sadece shuffle/refresh sonrası
-// çağrıldığı için sık çalışan bir yol değil.
+// syncCurrentIndexLocked searches for currentSongID in the queue and updates
+// currentIndex accordingly. Falls back to index 0 if the song is not found
+// (e.g. it was deleted). O(n) — only called after shuffle or refresh, not on
+// the hot playback path.
 func (p *Player) syncCurrentIndexLocked() {
 	if len(p.queue) == 0 {
 		p.currentIndex = 0
@@ -111,7 +112,7 @@ func (p *Player) syncCurrentIndexLocked() {
 	p.currentSongID = p.queue[0].ID
 }
 
-// Play: durumu Playing yapar. Playlist boşsa hata döner.
+// Play transitions state to Playing. Returns an error if the queue is empty.
 func (p *Player) Play() error {
 	p.mu.Lock()
 	if len(p.queue) == 0 {
@@ -125,7 +126,7 @@ func (p *Player) Play() error {
 	return nil
 }
 
-// Pause: sadece Playing durumundayken anlamlıdır.
+// Pause is only meaningful when already in the Playing state.
 func (p *Player) Pause() error {
 	p.mu.Lock()
 	if p.state != StatePlaying {
@@ -139,14 +140,12 @@ func (p *Player) Pause() error {
 	return nil
 }
 
-// Next: repeat moduna göre bir sonraki şarkıya geçer.
+// Next advances to the next track according to the current repeat mode.
 //
-// Varsayım (console-tabanlı, gerçek zamanlayıcı yok): bu sistemde "şarkı
-// bitti" olayı ayrı bir tetikleyici olarak yok; ilerleme sadece Next()
-// çağrısıyla simüle ediliyor. Bu yüzden RepeatOne modunda Next() çağrısı
-// BİLEREK aynı şarkıda kalır (kullanıcı "tekrarla" dediği için istemsiz
-// ilerlemeyi engelliyoruz) — gerçek bir player'da bu, "şarkı bitince aynı
-// şarkı yeniden başlar" davranışına karşılık gelir.
+// Assumption (console-based, no real timer): there is no separate "song ended"
+// trigger in this system; advancement is simulated exclusively via Next().
+// Therefore RepeatOne intentionally keeps the same track — in a real player
+// this maps to "replay the same song when it finishes".
 func (p *Player) Next() error {
 	p.mu.Lock()
 	if len(p.queue) == 0 {
@@ -170,7 +169,7 @@ func (p *Player) Next() error {
 		return nil
 	}
 
-	// Queue'nun sonundayız.
+	// We are at the end of the queue.
 	switch p.repeatMode {
 	case RepeatAll:
 		p.currentIndex = 0
@@ -185,7 +184,7 @@ func (p *Player) Next() error {
 	}
 }
 
-// Previous: Next'in simetriği. Başa gelindiğinde RepeatAll ile sona sarar.
+// Previous is the mirror image of Next. Wraps to the end with RepeatAll.
 func (p *Player) Previous() error {
 	p.mu.Lock()
 	if len(p.queue) == 0 {
@@ -223,7 +222,7 @@ func (p *Player) Previous() error {
 	}
 }
 
-// SetRepeatMode: repeat modunu değiştirir.
+// SetRepeatMode changes the current repeat mode.
 func (p *Player) SetRepeatMode(mode RepeatMode) {
 	p.mu.Lock()
 	p.repeatMode = mode
@@ -232,16 +231,14 @@ func (p *Player) SetRepeatMode(mode RepeatMode) {
 	dispatchEvent(evt, cbs)
 }
 
-// Shuffle: Fisher-Yates algoritmasıyla queue'yu karıştırır.
+// Shuffle randomises the queue using the Fisher-Yates algorithm.
 //
-// Neden Fisher-Yates: O(n) zaman, O(1) ekstra alan (in-place), ve
-// KANITLANMIŞ olarak uniform (her permütasyon eşit olasılıklı) bir
-// karıştırma sağlar — naif "rastgele iki elemanı N kere swapla" yaklaşımı
-// bias'lı sonuçlar üretebilir.
+// Why Fisher-Yates: O(n) time, O(1) extra space (in-place), and provably
+// uniform — every permutation is equally likely. A naive "swap N random
+// pairs" approach can produce biased results.
 //
-// currentSongID zaten ID bazlı tutulduğu için, shuffle sonrası
-// syncCurrentIndexLocked çağrısı "şu an çalan şarkı" kimliğinin
-// bozulmamasını garantiler.
+// Because the current track is tracked by ID, syncCurrentIndexLocked after
+// the shuffle guarantees the "currently playing song" identity is preserved.
 func (p *Player) Shuffle() {
 	p.mu.Lock()
 	for i := len(p.queue) - 1; i > 0; i-- {
@@ -259,7 +256,7 @@ func (p *Player) Shuffle() {
 	dispatchEvent(evt, cbs)
 }
 
-// RestoreOrder: shuffle öncesi (orijinal playlist) sırasına döner.
+// RestoreOrder returns the queue to the original playlist order (pre-shuffle).
 func (p *Player) RestoreOrder() {
 	p.mu.Lock()
 	p.queue = append([]Song(nil), p.originalOrder...)
@@ -269,7 +266,7 @@ func (p *Player) RestoreOrder() {
 	dispatchEvent(evt, cbs)
 }
 
-// CurrentSong: o an "çalıyor" olarak işaretli şarkıyı döner.
+// CurrentSong returns the song currently marked as "playing".
 func (p *Player) CurrentSong() (Song, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -279,31 +276,30 @@ func (p *Player) CurrentSong() (Song, error) {
 	return p.queue[p.currentIndex], nil
 }
 
-// State: o anki playback durumunu döner.
+// State returns the current playback state.
 func (p *Player) State() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.state
 }
 
-// RepeatModeValue: o anki repeat modunu döner (test/inceleme kolaylığı için).
+// RepeatModeValue returns the current repeat mode (useful for testing/inspection).
 func (p *Player) RepeatModeValue() RepeatMode {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.repeatMode
 }
 
-// QueueLen: o anki queue uzunluğunu döner.
+// QueueLen returns the current length of the playback queue.
 func (p *Player) QueueLen() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.queue)
 }
 
-// QueueSongs: o anki oynatma sırasının KOPYASINI döner (inceleme/UI/test
-// amaçlı). Songs() metodundaki "neden kopya" gerekçesi burada da geçerli:
-// çağıran kod bu slice'ı mutasyona uğratırsa player'ın internal state'i
-// bozulmamalı.
+// QueueSongs returns a COPY of the current playback order (for inspection/UI/testing).
+// Same rationale as Songs(): the caller must not be able to mutate the player's
+// internal state by modifying the returned slice.
 func (p *Player) QueueSongs() []Song {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -312,18 +308,35 @@ func (p *Player) QueueSongs() []Song {
 	return out
 }
 
-// QueueIterator: Player'ın o anki oynatma sırası üzerinde gezinmek için
-// bir SongIterator döner (Iterator Pattern).
-//
-// Deprecated: Bunun yerine QueueSongs metodu tercih edilmelidir.
-func (p *Player) QueueIterator() SongIterator {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return NewSongIterator(p.queue)
+// All returns an iter.Seq2 for ranging over the player's current queue with index and Song.
+// Runs under mutex protection; the lock is released safely on early exit (break).
+// Zero extra allocations (0-alloc).
+func (p *Player) All() iter.Seq2[int, Song] {
+	return LockedSeq2(&p.mu, func() []Song { return p.queue })
 }
 
-// Subscribe: Player olaylarını dinlemek için bir EventListener kaydeder (Observer Pattern).
-// Dönen unsubscribe fonksiyonu çağrılarak dinleme sonlandırılabilir.
+// Values returns an iter.Seq for ranging over the player's current queue (Song only).
+// Runs under mutex protection; the lock is released safely on early exit (break).
+// Zero extra allocations (0-alloc).
+func (p *Player) Values() iter.Seq[Song] {
+	return LockedSeq(&p.mu, func() []Song { return p.queue })
+}
+
+// ForEach runs the given function for every song in the player's queue.
+// The loop exits early if fn returns false (short-circuiting).
+// Uses the generic ForEach under the lock; produces 0 extra allocations.
+func (p *Player) ForEach(fn func(index int, song Song) bool) {
+	ForEach(p.All(), fn)
+}
+
+// Filter returns a new Song slice containing only the queue entries that match the predicate.
+// Uses the generic Filter under the lock.
+func (p *Player) Filter(predicate func(Song) bool) []Song {
+	return Filter(p.Values(), predicate)
+}
+
+// Subscribe registers an EventListener to receive Player events (Observer Pattern).
+// The returned unsubscribe function removes the listener when called.
 func (p *Player) Subscribe(l EventListener) (unsubscribe func()) {
 	if l == nil {
 		return func() {}
@@ -344,8 +357,8 @@ func (p *Player) Subscribe(l EventListener) (unsubscribe func()) {
 	}
 }
 
-// snapshotEventLocked: p.mu kilitliyken mevcut durumu ve dinleyicileri kopyalar.
-// Kilit dışına çıkıldıktan sonra dinleyiciler çağrılır (deadlock-free notification).
+// snapshotEventLocked copies the current state and listener list while p.mu is held.
+// Listeners are invoked AFTER the lock is released to prevent deadlocks.
 func (p *Player) snapshotEventLocked(eventType EventType) (PlayerEvent, []EventListener) {
 	var cur Song
 	if len(p.queue) > 0 && p.currentIndex < len(p.queue) {

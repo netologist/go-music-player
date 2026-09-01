@@ -1,28 +1,27 @@
 package musicplayer
 
-// MergeStrategy, iki playlist'in şarkı koleksiyonlarını birleştirirken
-// çakışmaları ve sıralamayı yöneten Strategy Pattern arayüzüdür.
+// MergeStrategy is the Strategy Pattern interface that controls how two playlists'
+// song collections are combined, resolving conflicts and determining order.
 //
-// Neden Strategy Pattern (Open-Closed Principle):
-// Switch-case veya if-else dallanması yerine her birleştirme mantığı
-// bağımsız bir strateji nesnesi olarak tanımlanır. Yeni bir birleştirme
-// stratejisi (örn. en uzun süreliyi seçen, sanatçıya göre önceliklendiren,
-// ya da kullanıcı tanımlı özel kurallar) eklemek için mevcut koda dokunulması
-// gerekmez.
+// Why Strategy Pattern (Open-Closed Principle):
+// Rather than branching with switch-case or if-else, each merge behaviour is
+// encapsulated in its own strategy object. Adding a new strategy (e.g. pick the
+// longer version, prioritise by artist, or apply user-defined rules) requires
+// zero changes to existing code.
 type MergeStrategy interface {
 	Merge(s1, s2 []Song) []Song
 }
 
-// MergeStrategyFunc, bağımsız fonksiyonların MergeStrategy arayüzünü sağlamasını
-// kolaylaştıran fonksiyonel adapter tipidir.
+// MergeStrategyFunc is a functional adapter that lets standalone functions satisfy
+// the MergeStrategy interface.
 type MergeStrategyFunc func(s1, s2 []Song) []Song
 
-// Merge, MergeStrategy arayüzünü uygular.
+// Merge implements the MergeStrategy interface.
 func (f MergeStrategyFunc) Merge(s1, s2 []Song) []Song {
 	return f(s1, s2)
 }
 
-// keepFirstStrategy: çakışan ID'lerde ilk playlist'teki (s1) şarkıyı korur.
+// keepFirstStrategy keeps the s1 (first playlist) version on ID conflicts.
 type keepFirstStrategy struct{}
 
 func (keepFirstStrategy) Merge(s1, s2 []Song) []Song {
@@ -41,7 +40,7 @@ func (keepFirstStrategy) Merge(s1, s2 []Song) []Song {
 	return out
 }
 
-// keepLastStrategy: çakışan ID'lerde ikinci playlist'teki (s2) şarkıyı korur.
+// keepLastStrategy keeps the s2 (second playlist) version on ID conflicts.
 type keepLastStrategy struct{}
 
 func (keepLastStrategy) Merge(s1, s2 []Song) []Song {
@@ -59,7 +58,7 @@ func (keepLastStrategy) Merge(s1, s2 []Song) []Song {
 	return out
 }
 
-// keepBothStrategy: hiçbir şarkıyı elemez, tüm kopyaları sırayla ekler.
+// keepBothStrategy includes every song without deduplication (duplicates appear twice).
 type keepBothStrategy struct{}
 
 func (keepBothStrategy) Merge(s1, s2 []Song) []Song {
@@ -69,7 +68,7 @@ func (keepBothStrategy) Merge(s1, s2 []Song) []Song {
 	return out
 }
 
-// keepLongestStrategy: çakışan ID'lerde süresi (Duration) daha uzun olan versiyonu seçer.
+// keepLongestStrategy picks the version with the longer Duration on ID conflicts.
 type keepLongestStrategy struct{}
 
 func (keepLongestStrategy) Merge(s1, s2 []Song) []Song {
@@ -103,21 +102,21 @@ func (keepLongestStrategy) Merge(s1, s2 []Song) []Song {
 	return out
 }
 
-// Standart strateji singleton nesneleri
+// Standard strategy singletons.
 var (
-	// KeepFirst: iki playlist'te de varsa p1'deki (ilk kaynak) versiyon kalır.
+	// KeepFirst: when a song appears in both playlists, the p1 (first source) version wins.
 	KeepFirst MergeStrategy = keepFirstStrategy{}
-	// KeepLast: iki playlist'te de varsa p2'deki (ikinci kaynak) versiyon kalır.
+	// KeepLast: when a song appears in both playlists, the p2 (second source) version wins.
 	KeepLast MergeStrategy = keepLastStrategy{}
-	// KeepBoth: her iki kopya da tutulur (dedup uygulanmaz, iki kez görünür).
+	// KeepBoth: both copies are retained (no dedup; a song may appear twice).
 	KeepBoth MergeStrategy = keepBothStrategy{}
-	// KeepLongest: çakışan şarkılardan süresi (Duration) daha uzun olan kalır.
+	// KeepLongest: on conflict, the version with the longer Duration wins.
 	KeepLongest MergeStrategy = keepLongestStrategy{}
 )
 
-// MergePlaylists: p1 ve p2'yi verilen MergeStrategy'e göre birleştirir ve
-// yeni bir *Playlist döner (p1 ve p2 mutasyona uğramaz).
-// strategy nil verilirse varsayılan olarak KeepFirst stratejisi uygulanır.
+// MergePlaylists merges p1 and p2 using the provided MergeStrategy and returns
+// a new *Playlist (p1 and p2 are not mutated).
+// If strategy is nil, KeepFirst is used as the default.
 func MergePlaylists(p1, p2 *Playlist, strategy MergeStrategy) *Playlist {
 	if strategy == nil {
 		strategy = KeepFirst

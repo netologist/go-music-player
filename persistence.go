@@ -5,33 +5,32 @@ import (
 	"os"
 )
 
-// playlistSnapshot: Playlist struct'ının serialize edilebilir "düz" hali.
+// playlistSnapshot is the serialisable "flat" representation of a Playlist.
 //
-// Neden Playlist'i doğrudan json.Marshal etmiyoruz: Playlist'in internal
-// state'i (mu sync.RWMutex, indexByID map'i) serialize edilmemeli — mutex
-// zaten serialize edilemez (kilitlenebilir), indexByID ise songs slice'ından
-// TÜRETİLEBİLEN (derived) bir veri, yani onu diske yazmak gereksiz veri
-// tekrarı olur ve yükleme sırasında songs ile senkron kalmama riski taşır.
-// Bu yüzden sadece "gerçek kaynak" olan Name/Songs/DedupEnabled kaydedilir,
-// indexByID yükleme sırasında AddSong çağrılarıyla yeniden inşa edilir.
+// Why not json.Marshal the Playlist directly: the internal state fields
+// (mu sync.RWMutex, indexByID map) must not be serialised — a mutex cannot be
+// marshalled, and indexByID is DERIVED state (it can be fully reconstructed from
+// the songs slice), so writing it to disk would be redundant and risks
+// desync on load. Only the true source fields (Name, Songs, DedupEnabled) are
+// persisted; indexByID is rebuilt via AddSong calls on load.
 type playlistSnapshot struct {
 	Name         string `json:"name"`
 	Songs        []Song `json:"songs"`
 	DedupEnabled bool   `json:"dedup_enabled"`
 }
 
-// SaveToFile: playlist'i JSON olarak diske yazar.
+// SaveToFile serialises the playlist to JSON on disk.
 //
-// Neden JSON (ve neden encoding/json): format insan-okunabilir, standart
-// kütüphane yeterli (üçüncü parti bağımlılık gerekmiyor), ve Song struct'ı
-// zaten basit/düz alanlardan oluştuğu için karmaşık bir serializer'a
-// ihtiyaç yok. Daha yüksek performans gerekseydi (binlerce playlist,
-// sık kayıt) gob ya da protobuf düşünülebilirdi, ama bu ölçekte JSON'un
-// okunabilirlik avantajı performans farkından daha değerli.
+// Why JSON (and why encoding/json): the format is human-readable, the standard
+// library is sufficient (no third-party dependency), and Song's fields are
+// simple / flat, so a complex serialiser is unnecessary. For higher throughput
+// (thousands of playlists, frequent saves) gob or protobuf would be worth
+// considering, but at this scale JSON's readability advantage exceeds the
+// performance difference.
 //
-// Concurrency notu: RLock alınır çünkü sadece okuma yapıyoruz; bu sayede
-// kaydetme sırasında başka goroutine'ler playlist'i OKUMAYA devam edebilir,
-// sadece eşzamanlı YAZMA işlemleri (Add/Remove/Move) bloklanır.
+// Concurrency note: RLock is acquired because we are only reading; other
+// goroutines can continue READING the playlist during the save, but concurrent
+// WRITE operations (Add/Remove/Move) are blocked.
 func (p *Playlist) SaveToFile(path string) error {
 	p.mu.RLock()
 	snap := playlistSnapshot{
@@ -57,9 +56,8 @@ func (p *Playlist) SaveToFile(path string) error {
 	return nil
 }
 
-// LoadPlaylistFromFile: diskten bir playlist okur ve indexByID map'ini
-// AddSong çağrılarıyla YENİDEN İNŞA eder (yukarıdaki yorumda açıklanan
-// "derived state'i diske yazma" sorununu böyle çözüyoruz).
+// LoadPlaylistFromFile reads a playlist from disk and REBUILDS the indexByID map
+// via AddSong calls (the "don't persist derived state" problem described above).
 func LoadPlaylistFromFile(path string) (*Playlist, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -71,9 +69,9 @@ func LoadPlaylistFromFile(path string) (*Playlist, error) {
 		return nil, err
 	}
 
-	// Dedup'ı yükleme sırasında kapalı tutuyoruz ki, diskte zaten var olan
-	// (belki dedup kapalıyken kaydedilmiş) tekrar eden şarkılar sessizce
-	// kaybolmasın; asıl DedupEnabled değerini en son ayarlıyoruz.
+	// Dedup is disabled during loading so that songs already on disk
+	// (possibly saved when dedup was off) don't silently disappear;
+	// the actual DedupEnabled value is set at the very end.
 	pl := NewPlaylist(snap.Name)
 	for _, s := range snap.Songs {
 		if err := pl.AddSong(s); err != nil {

@@ -1,18 +1,18 @@
 package musicplayer
 
-// EventType, oynatıcıda (Player) meydana gelen olayların tipini belirtir.
-// Observer Pattern: Player'ın iç durum değişikliklerini (state, track, queue, repeat)
-// dış dünyaya (UI, logger, analytics, audio engine) asenkron/senkron bildirmek için kullanılır.
+// EventType describes the kind of event that occurred in the Player.
+// Observer Pattern: used to asynchronously/synchronously notify external consumers
+// (UI, logger, analytics, audio engine) of internal state changes (state, track, queue, repeat).
 type EventType int
 
 const (
-	// EventStateChanged: Oynatma durumu değiştiğinde (Play, Pause) tetiklenir.
+	// EventStateChanged is fired when playback state changes (Play, Pause).
 	EventStateChanged EventType = iota
-	// EventTrackChanged: Oynatılan şarkı değiştiğinde (Next, Previous, Play vb.) tetiklenir.
+	// EventTrackChanged is fired when the current track changes (Next, Previous, Play, etc.).
 	EventTrackChanged
-	// EventQueueUpdated: Oynatma sırası/koleksiyon değiştiğinde (Shuffle, RestoreOrder, Refresh) tetiklenir.
+	// EventQueueUpdated is fired when the playback queue changes (Shuffle, RestoreOrder, Refresh).
 	EventQueueUpdated
-	// EventRepeatModeChanged: Repeat modu güncellendiğinde tetiklenir.
+	// EventRepeatModeChanged is fired when the repeat mode is updated.
 	EventRepeatModeChanged
 )
 
@@ -31,7 +31,7 @@ func (e EventType) String() string {
 	}
 }
 
-// PlayerEvent, olay tetiklendiğinde dinleyicilere (observer) iletilen veri paketidir.
+// PlayerEvent is the data packet delivered to observers when an event fires.
 type PlayerEvent struct {
 	Type         EventType
 	State        PlaybackState
@@ -41,5 +41,5 @@ type PlayerEvent struct {
 	QueueLength  int
 }
 
-// EventListener, Player olaylarını dinleyen Observer fonksiyon tipidir.
+// EventListener is the Observer function type that receives Player events.
 type EventListener func(event PlayerEvent)
